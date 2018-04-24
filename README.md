@@ -26,4 +26,3 @@ Global Flags:
       --unlock-key string   Unlock key, if raft logs are encrypted
 ```
 
-As you can see, every Task running on `node-1` was rebalanced to either `node-2` or `node-3` by the reconciliation loop.
