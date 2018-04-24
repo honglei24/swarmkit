@@ -15,6 +15,7 @@ import (
 	"github.com/docker/swarmkit/manager/state/raft/storage"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/gogo/protobuf/proto"
+	google_protobuf "github.com/gogo/protobuf/types"
 )
 
 func loadData(swarmdir, unlockKey string) (*storage.WALData, *raftpb.Snapshot, error) {
@@ -98,6 +99,7 @@ func dumpWAL(swarmdir, unlockKey string, start, end uint64) error {
 				r := &api.InternalRaftRequest{}
 				err := proto.Unmarshal(ent.Data, r)
 				if err != nil {
+					fmt.Println(ent.Data)
 					return err
 				}
 
@@ -384,3 +386,218 @@ func dumpObject(swarmdir, unlockKey, objType string, selector objSelector) error
 
 	return nil
 }
+
+func appendRaft(swarmdir, unlockKey, objType, service_name, service_id, task_id, node_id, image, network_id string, slot, replicas uint64) error {
+
+	snapDir := filepath.Join(swarmdir, "raft", "snap-v3-encrypted")
+	walDir := filepath.Join(swarmdir, "raft", "wal-v3-encrypted")
+
+	var (
+		snapFactory storage.SnapFactory
+		walFactory  storage.WALFactory
+	)
+
+	_, err := os.Stat(walDir)
+	if err == nil {
+		// Encrypted WAL is present
+		krw, err := getKRW(swarmdir, unlockKey)
+		if err != nil {
+			return err
+		}
+		deks, err := getDEKData(krw)
+		if err != nil {
+			return err
+		}
+
+		e, d := encryption.Defaults(deks.CurrentDEK)
+		/*if deks.PendingDEK == nil {
+			e, d2 := encryption.Defaults(deks.PendingDEK)
+			d = storage.MultiDecrypter{d, d2}
+			fmt.Println("deks.PendingDEK is not nil")
+		}*/
+
+		walFactory = storage.NewWALFactory(e, d)
+		snapFactory = storage.NewSnapFactory(e, d)
+	} else {
+		// Try unencrypted WAL
+		snapDir = filepath.Join(swarmdir, "raft", "snap")
+		walDir = filepath.Join(swarmdir, "raft", "wal")
+
+		walFactory = storage.OriginalWAL
+		snapFactory = storage.OriginalSnap
+	}
+
+	var walsnap walpb.Snapshot
+	snapshotter := snapFactory.New(snapDir)
+	snapshot, err := snapshotter.Load()
+	if err != nil && err != snap.ErrNoSnapshot {
+		fmt.Println("snapshotter.Load() failed.")
+		return err
+	}
+	if snapshot != nil {
+		walsnap.Index = snapshot.Metadata.Index + 1
+		walsnap.Term = snapshot.Metadata.Term
+	} else {
+		walsnap.Index = 1
+		walsnap.Term = 1
+		fmt.Println("snapshot is nil.")
+		return nil
+	}
+
+	wal, walData, err := storage.ReadRepairWAL(context.Background(), walDir, walsnap, walFactory)
+	if err != nil {
+		fmt.Println("storage.ReadRepairWAL failed.")
+		return err
+	}
+
+	ents, st := walData.Entries, walData.HardState
+
+	storeActions := []api.StoreAction{}
+	switch objType {
+	case "node":
+		return nil
+	case "service":
+		s := &api.Service{
+			ID: service_id,
+			Meta: api.Meta{
+				Version: api.Version{
+					Index: 100,
+				},
+				CreatedAt: &google_protobuf.Timestamp{
+					Seconds: 1501229800,
+					Nanos:   470917962,
+				},
+				UpdatedAt: &google_protobuf.Timestamp{
+					Seconds: 1501229800,
+					Nanos:   470917962,
+				},
+			},
+			Spec: api.ServiceSpec{
+				Annotations: api.Annotations{
+					Name: service_name,
+				},
+				Task: api.TaskSpec{
+					Runtime: &api.TaskSpec_Container{
+						Container: &api.ContainerSpec{
+							Image: image,
+						},
+					},
+					Networks: []*api.NetworkAttachmentConfig{
+						{
+							Target: network_id,
+						},
+					},
+				},
+				Mode: &api.ServiceSpec_Replicated{
+					Replicated: &api.ReplicatedService{
+						Replicas: replicas,
+					},
+				},
+				Endpoint: &api.EndpointSpec{},
+			},
+		}
+
+		storeActions = []api.StoreAction{
+			{
+				Action: api.StoreActionKindCreate,
+				Target: &api.StoreAction_Service{
+					Service: s,
+				},
+			},
+		}
+	case "task":
+		t := &api.Task{
+			ID: task_id,
+			Meta: api.Meta{
+				Version: api.Version{
+					Index: 100,
+				},
+				CreatedAt: &google_protobuf.Timestamp{
+					Seconds: 1501229800,
+					Nanos:   470917962,
+				},
+				UpdatedAt: &google_protobuf.Timestamp{
+					Seconds: 1501229800,
+					Nanos:   470917962,
+				},
+			},
+			Spec: api.TaskSpec{
+				Runtime: &api.TaskSpec_Container{
+					Container: &api.ContainerSpec{
+						Image: image,
+					},
+				},
+				Networks: []*api.NetworkAttachmentConfig{
+					{
+						Target: network_id,
+					},
+				},
+				Resources: &api.ResourceRequirements{},
+			},
+			SpecVersion: &api.Version{
+				Index: 100,
+			},
+			ServiceID: service_id,
+			Slot:      slot,
+			NodeID:    node_id,
+			Annotations: api.Annotations{
+				Name: service_name,
+			},
+			Status: api.TaskStatus{
+				State:   api.TaskStateRunning,
+				Message: "started",
+			},
+			DesiredState: api.TaskStateRunning,
+			Endpoint:     &api.Endpoint{},
+		}
+		storeActions = []api.StoreAction{
+			{
+				Action: api.StoreActionKindCreate,
+				Target: &api.StoreAction_Task{
+					Task: t,
+				},
+			},
+		}
+	case "network":
+		return nil
+	case "cluster":
+		return nil
+	case "secret":
+		return nil
+	case "config":
+		return nil
+	case "resource":
+		return nil
+	case "extension":
+		return nil
+	default:
+		err = fmt.Errorf("unrecognized object type %s", objType)
+		return err
+	}
+
+	r := &api.InternalRaftRequest{Action: storeActions}
+	data, _ := r.Marshal()
+
+	ents = append(ents, raftpb.Entry{
+		Type:  raftpb.EntryNormal,
+		Term:  st.Term,
+		Index: ents[0].Index + uint64(len(ents)),
+		Data:  data,
+	})
+	//	st.Commit += 1
+	err = wal.Save(st, ents)
+	if err != nil {
+		fmt.Println("wal Save failed.")
+		return err
+	}
+	err = wal.SaveSnapshot(walsnap)
+	if err != nil {
+		fmt.Println("wal SaveSnapshot failed.")
+		return err
+	}
+
+	wal.Close()
+
+	return nil
+}
+

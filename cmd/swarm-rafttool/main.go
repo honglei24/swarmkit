@@ -129,6 +129,69 @@ var (
 			return dumpObject(stateDir, unlockKey, args[0], selector)
 		},
 	}
+
+	appendCmd = &cobra.Command{
+		Use:   "append",
+		Short: "update raft log",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			stateDir, err := cmd.Flags().GetString("state-dir")
+			if err != nil {
+				return err
+			}
+
+			unlockKey, err := cmd.Flags().GetString("unlock-key")
+			if err != nil {
+				return err
+			}
+
+			objType, err := cmd.Flags().GetString("type")
+			if err != nil {
+				return err
+			}
+
+			service_id, err := cmd.Flags().GetString("service-id")
+			if err != nil || service_id == "" {
+				return err
+			}
+
+			service_name, err := cmd.Flags().GetString("service-name")
+			if err != nil || service_name == "" {
+				return err
+			}
+
+			task_id, err := cmd.Flags().GetString("task-id")
+			if err != nil {
+				return err
+			}
+
+			node_id, err := cmd.Flags().GetString("node-id")
+			if err != nil {
+				return err
+			}
+
+			image, err := cmd.Flags().GetString("image")
+			if err != nil {
+				return err
+			}
+
+			network_id, err := cmd.Flags().GetString("network-id")
+			if err != nil {
+				return err
+			}
+
+			replicas, err := cmd.Flags().GetUint64("replicas")
+			if err != nil {
+				return err
+			}
+
+			slot, err := cmd.Flags().GetUint64("slot")
+			if err != nil {
+				return err
+			}
+
+			return appendRaft(stateDir, unlockKey, objType, service_name, service_id, task_id, node_id, image, network_id, slot, replicas)
+		},
+	}
 )
 
 func init() {
@@ -136,6 +199,7 @@ func init() {
 	mainCmd.PersistentFlags().String("unlock-key", "", "Unlock key, if raft logs are encrypted")
 	decryptCmd.Flags().StringP("output-dir", "o", "plaintext_raft", "Output directory for decrypted raft logs")
 	mainCmd.AddCommand(
+		appendCmd,
 		decryptCmd,
 		dumpWALCmd,
 		dumpSnapshotCmd,
@@ -147,6 +211,16 @@ func init() {
 
 	dumpObjectCmd.Flags().String("id", "", "Look up object by ID")
 	dumpObjectCmd.Flags().String("name", "", "Look up object by name")
+
+	appendCmd.Flags().String("type", "", "Object type node/service/task/network...")
+	appendCmd.Flags().String("service-id", "", "Service id.")
+	appendCmd.Flags().String("task-id", "", "Task id.")
+	appendCmd.Flags().String("service-name", "", "Service name.")
+	appendCmd.Flags().String("image", "", "Service id.")
+	appendCmd.Flags().String("network-id", "", "Service network.")
+	appendCmd.Flags().Uint64("replicas", 0, "Service replicas.")
+	appendCmd.Flags().String("node-id", "", "Node id.")
+	appendCmd.Flags().Uint64("slot", 0, "Task slot.")
 }
 
 func main() {
@@ -154,3 +228,4 @@ func main() {
 		os.Exit(-1)
 	}
 }
+
